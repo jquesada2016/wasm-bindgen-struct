@@ -46,6 +46,7 @@ impl quote::ToTokens for Model {
 
 #[derive(Debug)]
 pub struct Struct {
+  attrs: Vec<syn::Attribute>,
   vis: syn::Visibility,
   name: syn::Ident,
   on: Option<syn::Type>,
@@ -63,6 +64,8 @@ impl TryFrom<syn::ItemStruct> for Struct {
   type Error = syn::Error;
 
   fn try_from(item: syn::ItemStruct) -> Result<Self, Self::Error> {
+    let mut attrs = item.attrs;
+
     let StructAttributes {
       on,
       extends,
@@ -73,7 +76,7 @@ impl TryFrom<syn::ItemStruct> for Struct {
       js_namespace,
       module,
       raw_module,
-    } = StructAttributes::from_attributes(&item.attrs)?;
+    } = StructAttributes::remove_attributes(&mut attrs)?;
 
     if getter && setter {
       emit_warning!(
@@ -84,6 +87,7 @@ impl TryFrom<syn::ItemStruct> for Struct {
     }
 
     Ok(Self {
+      attrs,
       vis: item.vis,
       name: item.ident,
       on,
@@ -140,6 +144,7 @@ impl quote::ToTokens for Struct {
 impl Struct {
   fn extern_type(&self) -> TokenStream {
     let Self {
+      attrs,
       vis,
       name,
       on,
@@ -168,12 +173,14 @@ impl Struct {
     quote! {
       #js_name
       #extends
+      #(#attrs)*
       #vis type #name;
     }
   }
 }
 
 pub struct Impl {
+  attrs: Vec<syn::Attribute>,
   ty: syn::Type,
   options: ImplAttributes,
   items: Vec<Method>,
@@ -183,8 +190,13 @@ impl TryFrom<syn::ItemImpl> for Impl {
   type Error = syn::Error;
 
   fn try_from(item: syn::ItemImpl) -> Result<Self, Self::Error> {
+    let mut attrs = item.attrs.clone();
+
+    let options = ImplAttributes::remove_attributes(&mut attrs)?;
+
     Ok(Self {
-      options: ImplAttributes::from_attributes(&item.attrs)?,
+      attrs,
+      options,
       ty: *item.self_ty.clone(),
       items: Method::try_from_impl(item)?,
     })
@@ -193,13 +205,19 @@ impl TryFrom<syn::ItemImpl> for Impl {
 
 impl ToTokens for Impl {
   fn to_tokens(&self, tokens: &mut TokenStream) {
-    let Self { ty, options, items } = self;
+    let Self {
+      attrs,
+      ty,
+      options,
+      items,
+    } = self;
 
     let output = items
       .iter()
       .map(|item| item.to_tokens_with_global(ty, options));
 
     let output = quote! {
+      #(#attrs)*
       impl #ty {
         #(#output)*
       }
@@ -211,6 +229,7 @@ impl ToTokens for Impl {
 
 #[derive(Debug)]
 struct Field {
+  attrs: Vec<syn::Attribute>,
   vis: syn::Visibility,
   name: syn::Ident,
   final_: bool,
@@ -224,6 +243,8 @@ impl TryFrom<syn::Field> for Field {
   type Error = syn::Error;
 
   fn try_from(field: syn::Field) -> Result<Self, Self::Error> {
+    let mut attrs = field.attrs;
+
     let FieldAttributes {
       getter,
       setter,
@@ -231,9 +252,10 @@ impl TryFrom<syn::Field> for Field {
       structural,
       js_name,
       r#static,
-    } = FieldAttributes::from_attributes(&field.attrs)?;
+    } = FieldAttributes::remove_attributes(&mut attrs)?;
 
     Ok(Self {
+      attrs,
       vis: field.vis,
       name: field
         .ident
@@ -250,6 +272,7 @@ impl TryFrom<syn::Field> for Field {
 impl Field {
   fn to_tokens_with_global(&self, global: &Struct) -> TokenStream {
     let Struct {
+      attrs: _,
       name,
       on,
       getters: getters_global,
@@ -269,6 +292,7 @@ impl Field {
       .unwrap_or_else(|| quote! { #name });
 
     let Self {
+      attrs,
       vis,
       name,
       final_,
@@ -338,8 +362,10 @@ impl Field {
       });
 
     quote! {
+      #(#attrs)*
       #getter_fn
 
+      #(#attrs)*
       #setter_fn
     }
   }
@@ -389,6 +415,7 @@ impl GetterKind {
 }
 
 struct Method {
+  attrs: Vec<syn::Attribute>,
   vis: syn::Visibility,
   sig: syn::Signature,
   body: Option<syn::Block>,
@@ -408,6 +435,8 @@ impl TryFrom<syn::TraitItemFn> for Method {
   type Error = syn::Error;
 
   fn try_from(f: syn::TraitItemFn) -> Result<Self, Self::Error> {
+    let mut attrs = f.attrs;
+
     let MethodAttributes {
       pub_,
       constructor,
@@ -420,7 +449,7 @@ impl TryFrom<syn::TraitItemFn> for Method {
       indexing_deleter,
       js_name,
       variadic,
-    } = MethodAttributes::from_attributes(&f.attrs)?;
+    } = MethodAttributes::remove_attributes(&mut attrs)?;
 
     if !f.sig.generics.params.is_empty() {
       abort!(f.sig.generics, "generics on methods are not supported");
@@ -439,6 +468,7 @@ impl TryFrom<syn::TraitItemFn> for Method {
     }
 
     Ok(Self {
+      attrs,
       vis: pub_
         .then(|| parse_quote! { pub })
         .unwrap_or_else(|| parse_quote! {}),
@@ -499,6 +529,7 @@ impl Method {
     } = options;
 
     let Self {
+      attrs,
       vis,
       sig,
       body,
@@ -560,9 +591,6 @@ impl Method {
 
     let variadic = variadic.then(|| quote! { #[wasm_bindgen(variadic)] });
 
-    let catch = is_result_from_return_ty(&sig.output)
-      .then(|| quote! { #[wasm_bindgen(catch)] });
-
     let outer_sig = {
       let mut sig = sig.clone();
 
@@ -571,7 +599,7 @@ impl Method {
       sig
     };
 
-    let sig = {
+    let (catch, inner_sig) = {
       let mut sig = sig.clone();
 
       // Rename method to have a trailing `_js`
@@ -588,35 +616,39 @@ impl Method {
       // Set the output type to match the `MapValue` if needed
       sig.output = self.inner_return_ty();
 
+      let catch = is_result_from_return_ty(&sig.output)
+        .then(|| quote! { #[wasm_bindgen(catch)] });
+
       // Replace `Self` return type with the real name of the type
       if is_self_ty_from_return_ty(&sig.output) {
         sig.output = parse_quote! { -> #ty };
       }
 
-      sig
+      (catch, sig)
     };
 
     let body = self.body();
 
     quote! {
-      #outer_sig {
+      #(#attrs)*
+      #vis #outer_sig {
         #[::wasm_bindgen::prelude::wasm_bindgen]
         extern "C" {
           #static_opt
           #method
-          #constructor
-          #final_
           #js_class
           #js_name
+          #js_namespace
+          #catch
+          #constructor
+          #final_
           #getter
           #setter
-          #js_namespace
           #indexing_getter
           #indexing_setter
           #indexing_deleter
           #variadic
-          #catch
-          #vis #sig;
+          #inner_sig;
         }
 
         #body
@@ -650,6 +682,8 @@ impl Method {
         quote! { #(#stmts)* }
       })
       .unwrap_or_else(|| {
+        let async_ = self.sig.asyncness.as_ref().map(|_| quote! { .await });
+
         let fn_name = quote::format_ident!("{}_js", self.sig.ident);
 
         if self.sig.receiver().is_some() {
@@ -662,7 +696,7 @@ impl Method {
             .map(|arg| fn_arg_to_ident(&arg))
             .collect::<syn::punctuated::Punctuated<_, syn::Token![,]>>();
 
-          quote! { self.#fn_name(#inputs) }
+          quote! { self.#fn_name(#inputs) #async_ }
         } else {
           let inputs = &self
             .sig
@@ -672,7 +706,7 @@ impl Method {
             .collect::<syn::punctuated::Punctuated<_, syn::Token![,]>>(
           );
 
-          quote! { Self::#fn_name(#inputs) }
+          quote! { Self::#fn_name(#inputs) #async_ }
         }
       })
   }

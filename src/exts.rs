@@ -1,5 +1,3 @@
-use itertools::Itertools;
-
 pub trait IdentExt {
   fn to_camel_from_snake(&self) -> Self;
 }

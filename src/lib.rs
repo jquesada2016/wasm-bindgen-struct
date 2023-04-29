@@ -484,4 +484,30 @@ mod macro_tests {
       },
     );
   }
+
+  #[test]
+  fn impl_with_module_gets_applied() {
+    test_macro(
+      quote! {
+        #[opts(module = "my-module")]
+        impl JsType {
+          fn example();
+        }
+      },
+      quote! {
+        impl JsType {
+          fn example() {
+            #[::wasm_bindgen::prelude::wasm_bindgen(module = "my-module")]
+            extern "C" {
+              #[wasm_bindgen(static_method_of = JsType)]
+              #[wasm_bindgen(js_name = "example")]
+              fn example_js();
+            }
+
+            Self::example_js()
+          }
+        }
+      },
+    );
+  }
 }

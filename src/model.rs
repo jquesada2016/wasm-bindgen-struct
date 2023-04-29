@@ -5,12 +5,9 @@ use quote::{
   quote_spanned,
   ToTokens,
 };
-use syn::{
-  parse::Parse,
-  parse_quote,
-  parse_quote_spanned,
-};
+use syn::parse_quote;
 
+#[derive(Debug)]
 pub enum Model {
   Struct(Struct),
   Impl(Impl),
@@ -18,9 +15,15 @@ pub enum Model {
 
 impl syn::parse::Parse for Model {
   fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-    let this = if let Ok(item_struct) = syn::ItemStruct::parse(input) {
+    let attrs = syn::Attribute::parse_outer(input)?;
+
+    let this = if let Ok(mut item_struct) = syn::ItemStruct::parse(input) {
+      item_struct.attrs = attrs;
+
       Self::Struct(Struct::try_from(item_struct)?)
-    } else if let Ok(item_impl) = syn::ItemImpl::parse(input) {
+    } else if let Ok(mut item_impl) = syn::ItemImpl::parse(input) {
+      item_impl.attrs = attrs;
+
       Self::Impl(Impl::try_from(item_impl)?)
     } else {
       abort!(
@@ -179,6 +182,7 @@ impl Struct {
   }
 }
 
+#[derive(Debug)]
 pub struct Impl {
   attrs: Vec<syn::Attribute>,
   ty: syn::Type,
@@ -251,7 +255,6 @@ impl TryFrom<syn::Field> for Field {
       final_: r#final,
       structural,
       js_name,
-      r#static,
     } = FieldAttributes::remove_attributes(&mut attrs)?;
 
     Ok(Self {
@@ -414,6 +417,7 @@ impl GetterKind {
   }
 }
 
+#[derive(Debug)]
 struct Method {
   attrs: Vec<syn::Attribute>,
   vis: syn::Visibility,
@@ -451,22 +455,6 @@ impl TryFrom<syn::TraitItemFn> for Method {
       variadic,
     } = MethodAttributes::remove_attributes(&mut attrs)?;
 
-    if !f.sig.generics.params.is_empty() {
-      abort!(f.sig.generics, "generics on methods are not supported");
-    }
-
-    if f.sig.constness.is_some() {
-      abort!(f.sig, "methods cannot be const");
-    }
-
-    if f.sig.abi.is_some() {
-      abort!(f.sig, "abi cannot be specified");
-    }
-
-    if f.sig.unsafety.is_some() {
-      abort!(f.sig, "methods cannot be declared unsafe");
-    }
-
     Ok(Self {
       attrs,
       vis: pub_
@@ -490,12 +478,6 @@ impl TryFrom<syn::TraitItemFn> for Method {
 
 impl Method {
   fn try_from_impl(item: syn::ItemImpl) -> Result<Vec<Self>, syn::Error> {
-    let impl_attrs = ImplAttributes::from_attributes(&item.attrs)?;
-
-    if !item.generics.params.is_empty() {
-      abort!(item.generics, "generics are not supported");
-    }
-
     // Reinterpret impl items as trait items, because trait
     // items allow for an optional default block
     let methods = item
@@ -505,7 +487,7 @@ impl Method {
       .map(syn::parse2::<syn::TraitItemFn>)
       .collect::<Result<Vec<_>, _>>()
       .map_err(|err| {
-        abort_call_site!("only methods are allowed");
+        abort_call_site!("only methods are allowed: `{}`", err);
       })
       .unwrap()
       .into_iter()
@@ -524,15 +506,15 @@ impl Method {
       final_: final_global,
       js_name: js_class,
       js_namespace,
-      module: _,
-      raw_module: _,
+      module,
+      raw_module,
     } = options;
 
     let Self {
       attrs,
       vis,
       sig,
-      body,
+      body: _,
       constructor,
       final_,
       structural,
@@ -544,6 +526,12 @@ impl Method {
       indexing_deleter,
       variadic,
     } = self;
+
+    let module = module.as_ref().map(|module| quote! { (module = #module) });
+
+    let raw_module = raw_module
+      .as_ref()
+      .map(|raw_module| quote! { (raw_module = #raw_module) });
 
     let static_opt = self
       .is_static()
@@ -632,7 +620,7 @@ impl Method {
     quote! {
       #(#attrs)*
       #vis #outer_sig {
-        #[::wasm_bindgen::prelude::wasm_bindgen]
+        #[::wasm_bindgen::prelude::wasm_bindgen #module #raw_module]
         extern "C" {
           #static_opt
           #method
@@ -807,7 +795,6 @@ struct FieldAttributes {
   final_: bool,
   structural: bool,
   js_name: Option<syn::Lit>,
-  r#static: bool,
 }
 
 #[derive(Debug, Attribute)]

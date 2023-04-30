@@ -443,9 +443,14 @@ struct TraitItemFnWithVisibility(syn::Visibility, syn::TraitItemFn);
 
 impl syn::parse::Parse for TraitItemFnWithVisibility {
   fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+    let mut attrs = syn::Attribute::parse_outer(input)?;
+
     let vis = syn::Visibility::parse(input)?;
 
-    let item = syn::TraitItemFn::parse(input)?;
+    let mut item = syn::TraitItemFn::parse(input)?;
+
+    attrs.extend(item.attrs);
+    item.attrs = attrs;
 
     Ok(Self(vis, item))
   }

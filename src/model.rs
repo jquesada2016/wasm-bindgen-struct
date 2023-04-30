@@ -49,6 +49,7 @@ impl quote::ToTokens for Model {
 
 #[derive(Debug)]
 pub struct Struct {
+  dbg: bool,
   attrs: Vec<syn::Attribute>,
   vis: syn::Visibility,
   name: syn::Ident,
@@ -70,6 +71,7 @@ impl TryFrom<syn::ItemStruct> for Struct {
     let mut attrs = item.attrs;
 
     let StructAttributes {
+      dbg,
       on,
       extends,
       getter,
@@ -90,6 +92,7 @@ impl TryFrom<syn::ItemStruct> for Struct {
     }
 
     Ok(Self {
+      dbg,
       attrs,
       vis: item.vis,
       name: item.ident,
@@ -140,6 +143,12 @@ impl quote::ToTokens for Struct {
       }
     };
 
+    if self.dbg {
+      emit_call_site_warning!(
+        "`#[wasm_bindgen_struct]` debug output:\n{output}"
+      );
+    }
+
     tokens.extend(output);
   }
 }
@@ -147,6 +156,7 @@ impl quote::ToTokens for Struct {
 impl Struct {
   fn extern_type(&self) -> TokenStream {
     let Self {
+      dbg: _,
       attrs,
       vis,
       name,
@@ -227,6 +237,12 @@ impl ToTokens for Impl {
       }
     };
 
+    if options.dbg {
+      emit_call_site_warning!(
+        "`#[wasm_bindgen_struct]` debug output:\n{output}"
+      );
+    }
+
     tokens.extend(output);
   }
 }
@@ -275,6 +291,7 @@ impl TryFrom<syn::Field> for Field {
 impl Field {
   fn to_tokens_with_global(&self, global: &Struct) -> TokenStream {
     let Struct {
+      dbg: _,
       attrs: _,
       name,
       on,
@@ -503,6 +520,7 @@ impl Method {
     options: &ImplAttributes,
   ) -> TokenStream {
     let ImplAttributes {
+      dbg: _,
       final_: final_global,
       js_name: js_class,
       js_namespace,
@@ -771,6 +789,7 @@ impl Method {
 #[derive(Attribute)]
 #[attribute(ident = opts)]
 struct StructAttributes {
+  dbg: bool,
   #[attribute(conflicts = [extends])]
   on: Option<syn::Type>,
   #[attribute(conflicts = [on])]
@@ -800,6 +819,7 @@ struct FieldAttributes {
 #[derive(Debug, Attribute)]
 #[attribute(ident = opts)]
 struct ImplAttributes {
+  dbg: bool,
   final_: bool,
   js_name: Option<syn::Lit>,
   #[attribute(optional)]

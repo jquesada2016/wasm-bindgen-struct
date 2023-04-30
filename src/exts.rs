@@ -62,12 +62,10 @@ mod ident_to_camel_from_snake {
   }
 }
 
-#[cfg(test)]
 pub trait TokenStreamExt {
   fn to_pretty(&self) -> String;
 }
 
-#[cfg(test)]
 impl TokenStreamExt for proc_macro2::TokenStream {
   #[track_caller]
   fn to_pretty(&self) -> String {

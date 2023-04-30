@@ -1,4 +1,7 @@
-use crate::exts::IdentExt;
+use crate::exts::{
+  IdentExt,
+  TokenStreamExt,
+};
 use attribute_derive::Attribute;
 use proc_macro2::TokenStream;
 use quote::{
@@ -145,7 +148,8 @@ impl quote::ToTokens for Struct {
 
     if self.dbg {
       emit_call_site_warning!(
-        "`#[wasm_bindgen_struct]` debug output:\n{output}"
+        "`#[wasm_bindgen_struct]` debug output:\n{}",
+        output.to_pretty(),
       );
     }
 
@@ -239,7 +243,8 @@ impl ToTokens for Impl {
 
     if options.dbg {
       emit_call_site_warning!(
-        "`#[wasm_bindgen_struct]` debug output:\n{output}"
+        "`#[wasm_bindgen_struct]` debug output:\n{}",
+        output.to_pretty(),
       );
     }
 

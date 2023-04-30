@@ -439,6 +439,18 @@ impl GetterKind {
   }
 }
 
+struct TraitItemFnWithVisibility(syn::Visibility, syn::TraitItemFn);
+
+impl syn::parse::Parse for TraitItemFnWithVisibility {
+  fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+    let vis = syn::Visibility::parse(input)?;
+
+    let item = syn::TraitItemFn::parse(input)?;
+
+    Ok(Self(vis, item))
+  }
+}
+
 #[derive(Debug)]
 struct Method {
   attrs: Vec<syn::Attribute>,
@@ -457,14 +469,15 @@ struct Method {
   variadic: bool,
 }
 
-impl TryFrom<syn::TraitItemFn> for Method {
+impl TryFrom<TraitItemFnWithVisibility> for Method {
   type Error = syn::Error;
 
-  fn try_from(f: syn::TraitItemFn) -> Result<Self, Self::Error> {
+  fn try_from(
+    TraitItemFnWithVisibility(vis, f): TraitItemFnWithVisibility,
+  ) -> Result<Self, Self::Error> {
     let mut attrs = f.attrs;
 
     let MethodAttributes {
-      pub_,
       constructor,
       final_,
       getter,
@@ -479,9 +492,7 @@ impl TryFrom<syn::TraitItemFn> for Method {
 
     Ok(Self {
       attrs,
-      vis: pub_
-        .then(|| parse_quote! { pub })
-        .unwrap_or_else(|| parse_quote! {}),
+      vis,
       sig: f.sig,
       body: f.default,
       constructor,
@@ -506,7 +517,7 @@ impl Method {
       .items
       .into_iter()
       .map(|item| item.to_token_stream())
-      .map(syn::parse2::<syn::TraitItemFn>)
+      .map(syn::parse2::<TraitItemFnWithVisibility>)
       .collect::<Result<Vec<_>, _>>()
       .map_err(|err| {
         abort_call_site!("only methods are allowed: `{}`", err);
@@ -838,7 +849,6 @@ struct ImplAttributes {
 #[derive(Debug, Attribute)]
 #[attribute(ident = opts)]
 struct MethodAttributes {
-  pub_: bool,
   constructor: bool,
   final_: bool,
   getter: bool,
